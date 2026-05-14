@@ -1,10 +1,11 @@
 // API Configuration
 // Base URL for the backend API
-// Using direct URL since proxy may have issues
-const API_BASE_URL = 'http://localhost:8000/';
+// Use Vite env var in production, otherwise default to local backend.
+const DEFAULT_API_BASE_URL = 'http://localhost:8000/';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
 
-// For direct backend calls (bypassing proxy), use this:
-const DIRECT_API_BASE_URL = 'http://localhost:8000/';
+// For direct backend calls (bypassing proxy), use the same configured base URL.
+const DIRECT_API_BASE_URL = API_BASE_URL;
 
 // Match the pattern of old APIs:
 // Old APIs: http://localhost:8000/userstories/...
