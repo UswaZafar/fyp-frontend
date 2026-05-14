@@ -41,6 +41,7 @@ export const LOGIN_ENDPOINTS = {
 
     createBulk: `${API_BASE_URL}userstories/bulk`,
     upload: `${API_BASE_URL}userstories/create_backlog/`, // Upload with FormData
+    uploadFile: `${API_BASE_URL}userstories/create_backlog/file/`, // Upload file or text via multipart/form-data
     getById: (id) => `${API_BASE_URL}userstories/${id}`,
     update: (id) => `${API_BASE_URL}userstories/${id}`,
     delete: (id) => `${API_BASE_URL}userstories/story/${id}/delete/`,

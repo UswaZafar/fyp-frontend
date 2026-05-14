@@ -23,18 +23,20 @@ export default function BacklogManager() {
     goal: "",
     benefit: "",
     priority: "Medium",
-    estimate: "3 points"
+    estimate: "3 points",
   });
 
   const [bulkStoriesText, setBulkStoriesText] = useState("");
   const [bulkFormData, setBulkFormData] = useState({
     owner_id: "",
     project_id: "",
-    // defaults kept for backend validation but not shown in UI
     role: "User",
     benefit: "N/A",
     priority: "Medium",
   });
+  const [useFileBulk, setUseFileBulk] = useState(false);
+  const [bulkStoriesFile, setBulkStoriesFile] = useState(null);
+
   const [projects, setProjects] = useState([]);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -43,60 +45,52 @@ export default function BacklogManager() {
   const [creatingProject, setCreatingProject] = useState(false);
   const [addingStories, setAddingStories] = useState(false);
 
-  // Fetch projects then user stories grouped by project on component mount
   useEffect(() => {
     fetchProjects();
   }, []);
 
+  // Simple fetchProjects implementation that loads projects and then stories per project
   const fetchProjects = async () => {
     try {
-      let resp = null;
-      // Get owner id from logged-in user and fetch owner-specific projects
+      setLoading(true);
+      setError("");
+
+      // try owner id from localStorage
       let ownerId = localStorage.getItem('ownerId');
-      
-      // Debug logging
-      console.log("[BacklogManager] Stored ownerId from localStorage:", ownerId);
-      console.log("[BacklogManager] Type of ownerId:", typeof ownerId);
-      
-      // Try to get from user context if localStorage is empty
       if (!ownerId) {
         try {
           const savedUser = localStorage.getItem('scrumai_user');
           if (savedUser) {
-            const user = JSON.parse(savedUser);
-            ownerId = user.owner_id || user.id || user.workspace_id;
-            console.log("[BacklogManager] Extracted ownerId from scrumai_user:", ownerId);
+            const su = JSON.parse(savedUser);
+            ownerId = su.owner_id || su.id || null;
           }
         } catch (e) {
-          console.warn("[BacklogManager] Failed to extract ownerId from scrumai_user:", e);
+          // ignore
         }
-      }
-      
-      console.log("[BacklogManager] Final ownerId to use:", ownerId);
-      
-      try {
-        if (ownerId) {
-          console.log("[BacklogManager] Fetching projects with endpoint:", LOGIN_ENDPOINTS.projects.getByOwner(ownerId));
-          resp = await apiRequest(LOGIN_ENDPOINTS.projects.getByOwner(ownerId), { method: 'GET' });
-          console.log("[BacklogManager] Response from getByOwner:", resp);
-        } else {
-          console.warn("[BacklogManager] WARNING: No ownerId available, skipping getByOwner");
-        }
-      } catch (e) {
-        console.warn("[BacklogManager] Failed to fetch projects by owner, trying all projects", e);
       }
 
-      console.log("[BacklogManager] Fetched projects:", resp);
-      if (Array.isArray(resp)) {
-        setProjects(resp);
-        // after projects are loaded, fetch stories per project
-        await fetchStoriesForProjects(resp);
-      } else {
-        // If no projects returned, ensure stories still load via fallback
-        await fetchStoriesForProjects([]);
+      let resp = null;
+      try {
+        if (ownerId) resp = await apiRequest(LOGIN_ENDPOINTS.projects.getByOwner(ownerId), { method: 'GET' });
+      } catch (e) {
+        // fallback to getting all projects
       }
+
+      if (!Array.isArray(resp)) {
+        try {
+          resp = await apiRequest(LOGIN_ENDPOINTS.projects.getAll, { method: 'GET' });
+        } catch (e) {
+          resp = [];
+        }
+      }
+
+      setProjects(Array.isArray(resp) ? resp : []);
+      await fetchStoriesForProjects(Array.isArray(resp) ? resp : []);
     } catch (err) {
       console.warn('Failed to fetch projects for dropdown', err);
+      setError('Failed to load projects');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -362,9 +356,16 @@ export default function BacklogManager() {
       return;
     }
 
-    if (!bulkStoriesText.trim()) {
-      setError("Please enter user stories");
-      return;
+    if (useFileBulk) {
+      if (!bulkStoriesFile) {
+        setError("Please select a file to upload");
+        return;
+      }
+    } else {
+      if (!bulkStoriesText.trim()) {
+        setError("Please enter user stories");
+        return;
+      }
     }
 
     setAddingStories(true);
@@ -385,10 +386,15 @@ export default function BacklogManager() {
       formData.append('goal', 'complete project'); // optional for bulk
       formData.append('benefit','so that i can meet the deadlines');
       formData.append('priority', bulkFormData.priority);
-      formData.append('stories_text', bulkStoriesText); // Send multiline text directly
+      if (useFileBulk) {
+        formData.append('stories_file', bulkStoriesFile);
+      } else {
+        formData.append('stories_text', bulkStoriesText); // Send multiline text directly
+      }
 
-      // Call backend API
-      const response = await apiRequestFormData(LOGIN_ENDPOINTS.userStories.upload, formData);
+      // Call backend API: use file endpoint when uploading a file, otherwise use text upload
+      const endpoint = useFileBulk ? LOGIN_ENDPOINTS.userStories.uploadFile : LOGIN_ENDPOINTS.userStories.upload;
+      const response = await apiRequestFormData(endpoint, formData);
 
       setBulkStoriesText("");
       setBulkFormData({
@@ -408,6 +414,52 @@ export default function BacklogManager() {
       });
     } catch (err) {
       setError("Failed to add stories: " + (err.message || "Please check your connection and try again."));
+    } finally {
+      setAddingStories(false);
+    }
+  };
+
+  // Separate handler for uploading a file via a dedicated card button
+  const handleBulkFileUpload = async (e) => {
+    e && e.preventDefault && e.preventDefault();
+
+    if (!bulkFormData.project_id || !bulkFormData.project_id.toString().trim()) {
+      setError('Please select a project');
+      return;
+    }
+
+    if (!bulkStoriesFile) {
+      setError('Please select a file to upload');
+      return;
+    }
+
+    setAddingStories(true);
+    setError('');
+    setSuccessMessage('');
+
+    try {
+      const formData = new FormData();
+      const ownerId = resolveOwnerId();
+      if (ownerId) formData.append('owner_id', ownerId);
+
+      formData.append('project_id', bulkFormData.project_id);
+      formData.append('role', bulkFormData.role || 'User');
+      formData.append('goal', bulkFormData.goal || '');
+      formData.append('benefit', bulkFormData.benefit || '');
+      formData.append('priority', bulkFormData.priority || 'Medium');
+      formData.append('stories_file', bulkStoriesFile);
+
+      const response = await apiRequestFormData(LOGIN_ENDPOINTS.userStories.uploadFile, formData);
+
+      setBulkStoriesFile(null);
+      setBulkStoriesText('');
+      setBulkFormData({ owner_id: '', project_id: '', role: 'User', benefit: 'N/A', priority: 'Medium' });
+      setMode('view');
+      setSuccessMessage(`Success! Created ${response.stories_created} user stories and ${response.tasks_created} tasks.`);
+      setTimeout(() => setSuccessMessage(''), 5000);
+      fetchProjects().catch(() => {});
+    } catch (err) {
+      setError('Failed to upload file: ' + (err.message || 'Please try again'));
     } finally {
       setAddingStories(false);
     }
@@ -885,7 +937,7 @@ export default function BacklogManager() {
             </div>
           </div>
 
-          <div className="mb-6">
+            <div className="mb-6">
             <label className="block mb-2 text-sandTan font-medium">Enter User Stories <span className="text-red-400">*</span></label>
             <p className="text-textMuted text-sm mb-4">
               Enter one story per line. Each line should be a complete user story in the format:<br/>
@@ -894,24 +946,50 @@ export default function BacklogManager() {
               </code><br/>
               Or just enter the story text - the backend will parse it automatically.
             </p>
-            <textarea
-              value={bulkStoriesText}
-              onChange={(e) => setBulkStoriesText(e.target.value)}
-              placeholder="Example:
-As a Developer, I want to implement user authentication, so that users can securely access the system
-As a User, I want to search products by name, so that I can quickly find what I need
-As an Admin, I want to generate monthly reports, so that I can track system performance"
-              rows={12}
-              className="w-full bg-nightBlue border border-sandTan/30 rounded-lg p-4 text-textLight focus:outline-none focus:border-sandTan font-mono text-sm"
-            />
+            <div className="flex gap-3 mb-3">
+              <button
+                type="button"
+                onClick={() => setUseFileBulk(false)}
+                className={`px-3 py-1 rounded-lg ${!useFileBulk ? 'bg-sandTan text-nightBlue' : 'bg-nightBlue border'}`}>
+                Paste stories
+              </button>
+              <button
+                type="button"
+                onClick={() => setUseFileBulk(true)}
+                className={`px-3 py-1 rounded-lg ${useFileBulk ? 'bg-sandTan text-nightBlue' : 'bg-nightBlue border'}`}>
+                Upload file
+              </button>
+            </div>
+
+            {!useFileBulk ? (
+              <textarea
+                value={bulkStoriesText}
+                onChange={(e) => setBulkStoriesText(e.target.value)}
+                placeholder="Example:\nAs a Developer, I want to implement user authentication, so that users can securely access the system\nAs a User, I want to search products by name, so that I can quickly find what I need\nAs an Admin, I want to generate monthly reports, so that I can track system performance"
+                rows={12}
+                className="w-full bg-nightBlue border border-sandTan/30 rounded-lg p-4 text-textLight focus:outline-none focus:border-sandTan font-mono text-sm"
+              />
+            ) : (
+              <div>
+                <input
+                  type="file"
+                  accept=".txt,.md,.csv"
+                  onChange={(e) => setBulkStoriesFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+                  className="w-full"
+                />
+                {bulkStoriesFile && (
+                  <p className="text-xs text-textMuted mt-2">Selected file: {bulkStoriesFile.name}</p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
             <button
               type="submit"
-              disabled={addingStories || !bulkFormData.project_id.trim() || !bulkStoriesText.trim()}
+              disabled={addingStories || !bulkFormData.project_id.trim() || (!useFileBulk && !bulkStoriesText.trim()) || (useFileBulk && !bulkStoriesFile)}
               className={`w-full sm:w-auto px-6 py-3 rounded-lg font-medium transition-all ${
-                bulkFormData.project_id.trim() && bulkStoriesText.trim() && !addingStories
+                bulkFormData.project_id.trim() && (useFileBulk ? bulkStoriesFile : bulkStoriesText.trim()) && !addingStories
                   ? "bg-sandTan text-nightBlue hover:bg-sandTanShadow"
                   : "bg-sandTan/40 text-nightBlue/80 cursor-not-allowed"
               }`}

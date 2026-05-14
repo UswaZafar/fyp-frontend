@@ -14,6 +14,8 @@ export default function BacklogCreator() {
     priority: 'Medium',
     stories_text: '',
   });
+  const [useFile, setUseFile] = useState(false);
+  const [storiesFile, setStoriesFile] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,8 +29,12 @@ export default function BacklogCreator() {
         throw new Error('Owner ID, Project ID, Role, Benefit, and Priority are required.');
       }
 
-      if (!formData.stories_text.trim()) {
-        throw new Error('User story description is required.');
+      if (useFile) {
+        if (!storiesFile) throw new Error('Please select a file to upload.');
+      } else {
+        if (!formData.stories_text.trim()) {
+          throw new Error('User story description is required.');
+        }
       }
 
       // Create FormData (backend expects POST data, not JSON)
@@ -39,10 +45,14 @@ export default function BacklogCreator() {
       data.append('goal', formData.goal);
       data.append('benefit', formData.benefit);
       data.append('priority', formData.priority);
-      data.append('stories_text', formData.stories_text);
+      if (useFile) {
+        data.append('stories_file', storiesFile);
+      } else {
+        data.append('stories_text', formData.stories_text);
+      }
 
-      // Call the API
-      const response = await apiRequestFormData(LOGIN_ENDPOINTS.backlog.createFromStories, data);
+      // Call the API (use file endpoint which accepts either stories_file or stories_text)
+      const response = await apiRequestFormData(LOGIN_ENDPOINTS.userStories.uploadFile, data);
 
       setSuccess(
         `Success! Created ${response.stories_created} user story and ${response.tasks_created} tasks.`
@@ -177,14 +187,43 @@ export default function BacklogCreator() {
               <p className="text-xs text-textSecondary mb-2">
                 Use the format: "As a [role], I want [goal], so that [benefit]"
               </p>
-              <textarea
-                required
-                rows={6}
-                value={formData.stories_text}
-                onChange={(e) => setFormData({ ...formData, stories_text: e.target.value })}
-                className="w-full px-4 py-3 border border-border rounded-xl focus:ring-2 focus:ring-primary/30 focus:border-primary bg-background text-textPrimary font-mono text-sm"
-                placeholder={`As a user, I want to login, so that I can access my account`}
-              />
+                <div className="flex gap-3 mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setUseFile(false)}
+                    className={`px-3 py-1 rounded-lg ${!useFile ? 'bg-primary text-white' : 'bg-background border'}`}>
+                    Paste stories
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUseFile(true)}
+                    className={`px-3 py-1 rounded-lg ${useFile ? 'bg-primary text-white' : 'bg-background border'}`}>
+                    Upload file
+                  </button>
+                </div>
+
+                {!useFile ? (
+                  <textarea
+                    required
+                    rows={6}
+                    value={formData.stories_text}
+                    onChange={(e) => setFormData({ ...formData, stories_text: e.target.value })}
+                    className="w-full px-4 py-3 border border-border rounded-xl focus:ring-2 focus:ring-primary/30 focus:border-primary bg-background text-textPrimary font-mono text-sm"
+                    placeholder={`As a user, I want to login, so that I can access my account`}
+                  />
+                ) : (
+                  <div>
+                    <input
+                      type="file"
+                      accept=".txt,.md,.csv"
+                      onChange={(e) => setStoriesFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+                      className="w-full"
+                    />
+                    {storiesFile && (
+                      <p className="text-xs text-textSecondary mt-2">Selected file: {storiesFile.name}</p>
+                    )}
+                  </div>
+                )}
             </div>
           </div>
 
@@ -211,4 +250,3 @@ export default function BacklogCreator() {
     </div>
   );
 }
-
